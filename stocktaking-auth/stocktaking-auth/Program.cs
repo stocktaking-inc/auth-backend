@@ -55,6 +55,12 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.WebHost.ConfigureKestrel(options =>
+{
+  options.ListenAnyIP(5100);
+});
+
+
 var app = builder.Build();
 
 app.UseHttpsRedirection();
