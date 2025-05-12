@@ -46,8 +46,8 @@ builder.Services.AddCors(options =>
     {
         builder
             .WithOrigins(
-                "https://stocktaking-auth.vercel.app", // Auth App (React)
-                "http://localhost:3000/"   // Main App (Next.js)
+                "http://localhost:5173", // Auth App (React)
+                "http://localhost:3000"   // Main App (Next.js)
             )
             .AllowAnyMethod()
             .AllowAnyHeader()
