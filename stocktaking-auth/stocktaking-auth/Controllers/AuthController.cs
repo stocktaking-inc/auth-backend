@@ -28,14 +28,14 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
-        if (await _context.Profiles.AnyAsync(p => p.email == request.email))
+        if (await _context.Profiles.AnyAsync(p => p.Email == request.Email))
             return BadRequest("Email already exists");
 
-        var profile = new profile
+        var profile = new Profile
         {
-            name = request.name,
-            email = request.email,
-            password_hash = BCrypt.Net.BCrypt.HashPassword(request.password)
+            name = request.Name,
+            email = request.Email,
+            password_hash = BCrypt.Net.BCrypt.HashPassword(request.Password)
         };
 
         _context.Profiles.Add(profile);
@@ -71,8 +71,8 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
-        var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.email == request.email);
-        if (profile == null || !BCrypt.Net.BCrypt.Verify(request.password, profile.password_hash))
+        var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == request.Email);
+        if (profile == null || !BCrypt.Net.BCrypt.Verify(request.Password, profile.PasswordHash))
             return Unauthorized("Invalid credentials");
 
         var accessToken = GenerateAccessToken(profile);
@@ -131,7 +131,7 @@ public class AuthController : ControllerBase
         var newAccessToken = GenerateAccessToken(profile);
         var newRefreshToken = GenerateRefreshToken();
 
-        await db.StringSetAsync($"refresh:{profile.id}", newRefreshToken, TimeSpan.FromDays(30));
+        await db.StringSetAsync($"refresh:{profile.Id}", newRefreshToken, TimeSpan.FromDays(30));
 
         Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
         {
@@ -176,14 +176,14 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
     }
-    
-    private string GenerateAccessToken(profile profile)
+
+    private string GenerateAccessToken(Profile profile)
     {
         var claims = new[]
         {
-            new Claim(ClaimTypes.NameIdentifier, profile.id.ToString()),
-            new Claim(ClaimTypes.Email, profile.email),
-            new Claim(ClaimTypes.Name, profile.name)
+            new Claim(ClaimTypes.NameIdentifier, profile.Id.ToString()),
+            new Claim(ClaimTypes.Email, profile.Email),
+            new Claim(ClaimTypes.Name, profile.Name)
         };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));

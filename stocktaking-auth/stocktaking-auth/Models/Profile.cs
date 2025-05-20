@@ -1,15 +1,28 @@
-﻿namespace stocktaking_auth.Models;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 
-public class profile
+namespace stocktaking_auth.Models;
+
+[Table("profile")]
+public class Profile
 {
-  public int id { get; set; }
-  public string name { get; set; }
-  public string email { get; set; }
-  public string? phone { get; set; }
-  public string? company { get; set; }
-  public string? position { get; set; }
-  public string? description { get; set; }
-  public string password_hash { get; set; }
-  public int? settings_id { get; set; }
-  public int? business_plan_id { get; set; }
+  [Column("id")]
+  public int Id { get; set; }
+  [Column("name")]
+  public string Name { get; set; }
+  [Column("email")]
+  public string Email { get; set; }
+  [Column("phone")]
+  public string? Phone { get; set; }
+  [Column("company")]
+  public string? Company { get; set; }
+  [Column("position")]
+  public string? Position { get; set; }
+  [Column("description")]
+  public string? Description { get; set; }
+  [Column("password_hash")]
+  public string PasswordHash { get; set; }
+  [Column("settings_id")]
+  public int? SettingsId { get; set; }
+  [Column("business_plan_id")]
+  public int? BusinessPlanId { get; set; }
 }
