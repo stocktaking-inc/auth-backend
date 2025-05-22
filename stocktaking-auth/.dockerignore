@@ -10,3 +10,6 @@ appsettings.*.json
 .git/
 .gitignore
 .gitattributes
+
+stocktaking-auth.sln
+stocktaking-auth.sln.DotSettings.user
