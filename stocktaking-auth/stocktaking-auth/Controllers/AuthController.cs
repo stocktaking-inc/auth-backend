@@ -56,7 +56,7 @@ public class AuthController : ControllerBase
         await _context.SaveChangesAsync();
 
         var tokens = await GenerateAndSetTokens(profile);
-        return Ok(new { User = new UserProfileDto(profile), Tokens = tokens });
+        return Ok(new { Tokens = tokens });
     }
 
     [HttpPost("login")]
@@ -75,7 +75,7 @@ public class AuthController : ControllerBase
             return Unauthorized(ErrorResponseDTO.InvalidCredentials());
 
         var tokens = await GenerateAndSetTokens(profile);
-        return Ok(new { User = new UserProfileDto(profile), Tokens = tokens });
+        return Ok(new { Tokens = tokens });
     }
 
     [HttpPost("refresh")]
