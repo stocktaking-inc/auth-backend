@@ -3,6 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using stocktaking_auth.Data;
 using stocktaking_auth.Models;
+using stocktaking_auth.Dtos.Auth;
+using stocktaking_auth.Configuration;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -16,90 +19,63 @@ public class AuthController : ControllerBase
 {
     private readonly AuthDbContext _context;
     private readonly IConnectionMultiplexer _redis;
-    private readonly IConfiguration _configuration;
+    private readonly JwtSettings _jwtSettings;
 
-    public AuthController(AuthDbContext context, IConnectionMultiplexer redis, IConfiguration configuration)
+    public AuthController(
+        AuthDbContext context,
+        IConnectionMultiplexer redis,
+        IOptions<JwtSettings> jwtSettings)
     {
         _context = context;
         _redis = redis;
-        _configuration = configuration;
+        _jwtSettings = jwtSettings.Value;
     }
 
     [HttpPost("register")]
-    public async Task<IActionResult> Register([FromBody] RegisterRequest request)
+    public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
     {
-        if (await _context.Profiles.AnyAsync(p => p.Email == request.Email))
-            return BadRequest("Email already exists");
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .FirstOrDefault() ?? "Validation error"));
+        }
+
+        if (await _context.Profiles.AnyAsync(p => p.Email == registerDto.Email))
+            return BadRequest(ErrorResponseDTO.EmailAlreadyExists());
 
         var profile = new Profile
         {
-            name = request.Name,
-            email = request.Email,
-            password_hash = BCrypt.Net.BCrypt.HashPassword(request.Password)
+            Name = registerDto.Name,
+            Email = registerDto.Email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password)
         };
 
         _context.Profiles.Add(profile);
         await _context.SaveChangesAsync();
 
-        var accessToken = GenerateAccessToken(profile);
-        var refreshToken = GenerateRefreshToken();
-
-        var db = _redis.GetDatabase();
-        await db.StringSetAsync($"refresh:{profile.id}", refreshToken, TimeSpan.FromDays(30));
-
-        Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(5),
-            Path = "/",
-            Domain = null
-        });
-
-        Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddDays(30)
-        });
-
-        return Ok(new { AccessToken = accessToken, RefreshToken = refreshToken });
+        var tokens = await GenerateAndSetTokens(profile);
+        return Ok(new { User = new UserProfileDto(profile), Tokens = tokens });
     }
 
     [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
     {
-        var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == request.Email);
-        if (profile == null || !BCrypt.Net.BCrypt.Verify(request.Password, profile.PasswordHash))
-            return Unauthorized("Invalid credentials");
-
-        var accessToken = GenerateAccessToken(profile);
-        var refreshToken = GenerateRefreshToken();
-
-        var db = _redis.GetDatabase();
-        await db.StringSetAsync($"refresh:{profile.id}", refreshToken, TimeSpan.FromDays(30));
-
-        Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
+        if (!ModelState.IsValid)
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(5),
-            Path = "/",
-            Domain = null
-        });
+            return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
+                .SelectMany(v => v.Errors)
+                .Select(e => e.ErrorMessage)
+                .FirstOrDefault() ?? "Validation error"));
+        }
 
-        Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddDays(30)
-        });
+        var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == loginDto.Email);
+        if (profile == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, profile.PasswordHash))
+            return Unauthorized(ErrorResponseDTO.InvalidCredentials());
 
-        return Ok(new { AccessToken = accessToken, RefreshToken = refreshToken });
+        var tokens = await GenerateAndSetTokens(profile);
+        return Ok(new { User = new UserProfileDto(profile), Tokens = tokens });
     }
 
     [HttpPost("refresh")]
@@ -109,36 +85,42 @@ public class AuthController : ControllerBase
         var refreshToken = Request.Cookies["RefreshToken"];
 
         if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(refreshToken))
-            return Unauthorized("Missing tokens");
+            return Unauthorized(ErrorResponseDTO.MissingTokens());
 
         var principal = GetPrincipalFromExpiredToken(accessToken);
         if (principal == null)
-            return Unauthorized("Invalid access token");
+            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
 
         var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userId))
-            return Unauthorized("Invalid access token");
+            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
 
         var db = _redis.GetDatabase();
         var storedRefreshToken = await db.StringGetAsync($"refresh:{userId}");
         if (storedRefreshToken != refreshToken)
-            return Unauthorized("Invalid refresh token");
+            return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
 
-        var profile = await _context.Profiles.FindAsync(int.Parse(userId));
+        if (!int.TryParse(userId, out var userIdInt))
+            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
+
+        var profile = await _context.Profiles.FindAsync(userIdInt);
         if (profile == null)
-            return Unauthorized("User not found");
+            return Unauthorized(ErrorResponseDTO.UserNotFound());
 
         var newAccessToken = GenerateAccessToken(profile);
         var newRefreshToken = GenerateRefreshToken();
 
-        await db.StringSetAsync($"refresh:{profile.Id}", newRefreshToken, TimeSpan.FromDays(30));
+        await Task.WhenAll(
+            db.StringSetAsync($"refresh:{profile.Id}", newRefreshToken, TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays)),
+            db.StringSetAsync($"refresh-token-mapping:{newRefreshToken}", profile.Id.ToString(), TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays))
+        );
 
         Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
         {
             HttpOnly = true,
             Secure = true,
             SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(5)
+            Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes)
         });
 
         Response.Cookies.Append("RefreshToken", newRefreshToken, new CookieOptions
@@ -146,10 +128,67 @@ public class AuthController : ControllerBase
             HttpOnly = true,
             Secure = true,
             SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddDays(30)
+            Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
         });
 
         return Ok(new { AccessToken = newAccessToken, RefreshToken = newRefreshToken });
+    }
+
+    [HttpPost("refresh-access")]
+    public async Task<IActionResult> RefreshAccessToken()
+    {
+        var refreshToken = Request.Cookies["RefreshToken"];
+        if (string.IsNullOrEmpty(refreshToken))
+            return Unauthorized(ErrorResponseDTO.MissingTokens());
+
+        var db = _redis.GetDatabase();
+        var userId = await db.StringGetAsync($"refresh-token-mapping:{refreshToken}");
+
+        if (userId.IsNullOrEmpty)
+            return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
+
+        if (!int.TryParse(userId, out var userIdInt))
+            return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
+
+        var profile = await _context.Profiles.FindAsync(userIdInt);
+        if (profile == null)
+            return Unauthorized(ErrorResponseDTO.UserNotFound());
+
+        var newAccessToken = GenerateAccessToken(profile);
+
+        Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes)
+        });
+
+        return Ok(new { AccessToken = newAccessToken });
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var refreshToken = Request.Cookies["RefreshToken"];
+        if (!string.IsNullOrEmpty(refreshToken))
+        {
+            var db = _redis.GetDatabase();
+            var userId = await db.StringGetAsync($"refresh-token-mapping:{refreshToken}");
+
+            if (!userId.IsNullOrEmpty)
+            {
+                await Task.WhenAll(
+                    db.KeyDeleteAsync($"refresh:{userId}"),
+                    db.KeyDeleteAsync($"refresh-token-mapping:{refreshToken}")
+                );
+            }
+        }
+
+        Response.Cookies.Delete("AccessToken");
+        Response.Cookies.Delete("RefreshToken");
+
+        return Ok();
     }
 
     [HttpGet("verify")]
@@ -165,16 +204,47 @@ public class AuthController : ControllerBase
                 ValidateAudience = true,
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
-                ValidIssuer = _configuration["Jwt:Issuer"],
-                ValidAudience = _configuration["Jwt:Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]))
+                ValidIssuer = _jwtSettings.Issuer,
+                ValidAudience = _jwtSettings.Audience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key))
             }, out _);
             return Ok();
         }
         catch
         {
-            return Unauthorized();
+            return Unauthorized(ErrorResponseDTO.Unauthorized());
         }
+    }
+
+    private async Task<object> GenerateAndSetTokens(Profile profile)
+    {
+        var accessToken = GenerateAccessToken(profile);
+        var refreshToken = GenerateRefreshToken();
+
+        var db = _redis.GetDatabase();
+        await Task.WhenAll(
+            db.StringSetAsync($"refresh:{profile.Id}", refreshToken, TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays)),
+            db.StringSetAsync($"refresh-token-mapping:{refreshToken}", profile.Id.ToString(), TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays))
+        );
+
+        Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+            Path = "/"
+        });
+
+        Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
+        });
+
+        return new { AccessToken = accessToken, RefreshToken = refreshToken };
     }
 
     private string GenerateAccessToken(Profile profile)
@@ -186,14 +256,14 @@ public class AuthController : ControllerBase
             new Claim(ClaimTypes.Name, profile.Name)
         };
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var token = new JwtSecurityToken(
-            issuer: _configuration["Jwt:Issuer"],
-            audience: _configuration["Jwt:Audience"],
+            issuer: _jwtSettings.Issuer,
+            audience: _jwtSettings.Audience,
             claims: claims,
-            expires: DateTime.Now.AddMinutes(5),
+            expires: DateTime.Now.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
@@ -204,16 +274,16 @@ public class AuthController : ControllerBase
         return Guid.NewGuid().ToString();
     }
 
-    private ClaimsPrincipal GetPrincipalFromExpiredToken(string token)
+    private ClaimsPrincipal? GetPrincipalFromExpiredToken(string token)
     {
         var tokenValidationParameters = new TokenValidationParameters
         {
             ValidateAudience = true,
             ValidateIssuer = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"])),
-            ValidIssuer = _configuration["Jwt:Issuer"],
-            ValidAudience = _configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key)),
+            ValidIssuer = _jwtSettings.Issuer,
+            ValidAudience = _jwtSettings.Audience,
             ValidateLifetime = false
         };
 
@@ -233,6 +303,3 @@ public class AuthController : ControllerBase
         }
     }
 }
-
-public record RegisterRequest(string name, string email, string password);
-public record LoginRequest(string email, string password);
