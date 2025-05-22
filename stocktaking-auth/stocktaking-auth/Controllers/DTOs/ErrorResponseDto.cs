@@ -2,7 +2,7 @@ namespace stocktaking_auth.Models;
 
 public class ErrorResponseDTO
 {
-    public string Message { get; set; }
+    public string Message { get; set; } = string.Empty;
     public static ErrorResponseDTO EmailAlreadyExists()
   {
     return new ErrorResponseDTO

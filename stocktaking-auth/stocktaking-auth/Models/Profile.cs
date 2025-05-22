@@ -8,9 +8,9 @@ public class Profile
   [Column("id")]
   public int Id { get; set; }
   [Column("name")]
-  public string Name { get; set; }
+  public required string Name { get; set; } = string.Empty;
   [Column("email")]
-  public string Email { get; set; }
+  public required string Email { get; set; } = string.Empty;
   [Column("phone")]
   public string? Phone { get; set; }
   [Column("company")]
@@ -20,7 +20,7 @@ public class Profile
   [Column("description")]
   public string? Description { get; set; }
   [Column("password_hash")]
-  public string PasswordHash { get; set; }
+  public required string PasswordHash { get; set; } = string.Empty;
   [Column("settings_id")]
   public int? SettingsId { get; set; }
   [Column("business_plan_id")]

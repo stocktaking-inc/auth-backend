@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using stocktaking_auth.Models;
 
 namespace stocktaking_auth.Dtos.Auth;
 
