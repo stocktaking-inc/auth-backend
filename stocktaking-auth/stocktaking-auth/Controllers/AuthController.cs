@@ -20,6 +20,7 @@ public class AuthController : ControllerBase
   private readonly AuthDbContext _context;
   private readonly JwtSettings _jwtSettings;
   private readonly IConnectionMultiplexer _redis;
+  private readonly string _frontendUrl;
 
   public AuthController(
     AuthDbContext context,
@@ -29,11 +30,15 @@ public class AuthController : ControllerBase
     _context = context;
     _redis = redis;
     _jwtSettings = jwtSettings.Value;
+    _frontendUrl = Environment.GetEnvironmentVariable("CORE_FRONTEND_URL") ?? "http://localhost:3000";
   }
 
   [HttpPost("register")]
   public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
   {
+    if (User.Identity?.IsAuthenticated == true)
+      return BadRequest(ErrorResponseDto.ValidationError("Cannot register while authenticated"));
+
     if (!ModelState.IsValid)
       return BadRequest(ErrorResponseDto.ValidationError(ModelState.Values
         .SelectMany(v => v.Errors)
@@ -53,8 +58,9 @@ public class AuthController : ControllerBase
     _context.Profiles.Add(profile);
     await _context.SaveChangesAsync();
 
-    var tokens = await GenerateAndSetTokens(profile);
-    return Ok(new { Tokens = tokens });
+    await GenerateAndSetTokens(profile);
+
+    return Redirect($"{_frontendUrl}/dashboard");
   }
 
   [HttpPost("login")]
@@ -70,8 +76,9 @@ public class AuthController : ControllerBase
     if (profile == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, profile.PasswordHash))
       return Unauthorized(ErrorResponseDto.InvalidCredentials());
 
-    var tokens = await GenerateAndSetTokens(profile);
-    return Ok(new { Tokens = tokens });
+    await GenerateAndSetTokens(profile);
+
+    return Redirect($"{_frontendUrl}/dashboard");
   }
 
   [HttpPost("refresh")]
@@ -117,16 +124,18 @@ public class AuthController : ControllerBase
     {
       HttpOnly = true,
       Secure = true,
-      SameSite = SameSiteMode.Lax,
-      Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes)
+      SameSite = SameSiteMode.None,
+      Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+      Path = "/"
     });
 
     Response.Cookies.Append("RefreshToken", newRefreshToken, new CookieOptions
     {
       HttpOnly = true,
-      Secure = false,
+      Secure = true,
       SameSite = SameSiteMode.None,
-      Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
+      Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
+      Path = "/"
     });
 
     return Ok(new { AccessToken = newAccessToken, RefreshToken = newRefreshToken });
@@ -157,9 +166,10 @@ public class AuthController : ControllerBase
     Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
     {
       HttpOnly = true,
-      Secure = false,
+      Secure = true,
       SameSite = SameSiteMode.None,
-      Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes)
+      Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+      Path = "/"
     });
 
     return Ok(new { AccessToken = newAccessToken });
@@ -184,7 +194,7 @@ public class AuthController : ControllerBase
     Response.Cookies.Delete("AccessToken");
     Response.Cookies.Delete("RefreshToken");
 
-    return Ok();
+    return Redirect($"{_frontendUrl}/login");
   }
 
   [HttpGet("verify")]
@@ -212,7 +222,7 @@ public class AuthController : ControllerBase
     }
   }
 
-  private async Task<object> GenerateAndSetTokens(Profile profile)
+  private async Task GenerateAndSetTokens(Profile profile)
   {
     var accessToken = GenerateAccessToken(profile);
     var refreshToken = GenerateRefreshToken();
@@ -228,7 +238,7 @@ public class AuthController : ControllerBase
     Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
     {
       HttpOnly = true,
-      Secure = false,
+      Secure = true,
       SameSite = SameSiteMode.None,
       Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
       Path = "/"
@@ -237,12 +247,11 @@ public class AuthController : ControllerBase
     Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
     {
       HttpOnly = true,
-      Secure = false,
+      Secure = true,
       SameSite = SameSiteMode.None,
-      Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
+      Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays),
+      Path = "/"
     });
-
-    return new { AccessToken = accessToken, RefreshToken = refreshToken };
   }
 
   private string GenerateAccessToken(Profile profile)
