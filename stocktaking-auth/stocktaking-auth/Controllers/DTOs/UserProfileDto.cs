@@ -1,9 +1,12 @@
 using stocktaking_auth.Models;
-namespace stocktaking_auth.Dtos.Auth;
+
+namespace stocktaking_auth.Controllers.DTOs;
 
 public class UserProfileDto
 {
-  public UserProfileDto() { }
+  public UserProfileDto()
+  {
+  }
 
   public UserProfileDto(Profile profile)
   {

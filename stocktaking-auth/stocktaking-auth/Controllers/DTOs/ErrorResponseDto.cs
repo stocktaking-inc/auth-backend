@@ -1,69 +1,70 @@
-namespace stocktaking_auth.Models;
+namespace stocktaking_auth.Controllers.DTOs;
 
-public class ErrorResponseDTO
+public class ErrorResponseDto
 {
-    public string Message { get; set; } = string.Empty;
-    public static ErrorResponseDTO EmailAlreadyExists()
+  public string Message { get; set; } = string.Empty;
+
+  public static ErrorResponseDto EmailAlreadyExists()
   {
-    return new ErrorResponseDTO
+    return new ErrorResponseDto
     {
-      Message = "Email already exists",
+      Message = "Email already exists"
     };
   }
 
-    public static ErrorResponseDTO InvalidCredentials()
+  public static ErrorResponseDto InvalidCredentials()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "Invalid credentials",
-        };
-    }
+      Message = "Invalid credentials"
+    };
+  }
 
-    public static ErrorResponseDTO MissingTokens()
+  public static ErrorResponseDto MissingTokens()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "Missing tokens",
-        };
-    }
+      Message = "Missing tokens"
+    };
+  }
 
-    public static ErrorResponseDTO InvalidAccessToken()
+  public static ErrorResponseDto InvalidAccessToken()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "Invalid access token",
-        };
-    }
+      Message = "Invalid access token"
+    };
+  }
 
-    public static ErrorResponseDTO InvalidRefreshToken()
+  public static ErrorResponseDto InvalidRefreshToken()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "Invalid refresh token",
-        };
-    }
+      Message = "Invalid refresh token"
+    };
+  }
 
-    public static ErrorResponseDTO UserNotFound()
+  public static ErrorResponseDto UserNotFound()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "User not found",
-        };
-    }
+      Message = "User not found"
+    };
+  }
 
-    public static ErrorResponseDTO Unauthorized()
+  public static ErrorResponseDto Unauthorized()
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = "Unauthorized",
-        };
-    }
+      Message = "Unauthorized"
+    };
+  }
 
-    public static ErrorResponseDTO ValidationError(string message)
+  public static ErrorResponseDto ValidationError(string message)
+  {
+    return new ErrorResponseDto
     {
-        return new ErrorResponseDTO
-        {
-            Message = message,
-        };
-    }
+      Message = message
+    };
+  }
 }

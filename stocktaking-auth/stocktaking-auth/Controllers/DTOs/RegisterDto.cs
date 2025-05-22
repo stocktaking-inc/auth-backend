@@ -1,7 +1,6 @@
 using System.ComponentModel.DataAnnotations;
-using stocktaking_auth.Models;
 
-namespace stocktaking_auth.Dtos.Auth;
+namespace stocktaking_auth.Controllers.DTOs;
 
 public class RegisterDto
 {
@@ -9,9 +8,7 @@ public class RegisterDto
   [StringLength(100, MinimumLength = 2)]
   public string Name { get; set; } = null!;
 
-  [Required]
-  [EmailAddress]
-  public string Email { get; set; } = null!;
+  [Required] [EmailAddress] public string Email { get; set; } = null!;
 
   [Required]
   [StringLength(100, MinimumLength = 6)]

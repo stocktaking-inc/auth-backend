@@ -1,13 +1,10 @@
 using System.ComponentModel.DataAnnotations;
-using stocktaking_auth.Models;
 
-namespace stocktaking_auth.Dtos.Auth;
+namespace stocktaking_auth.Controllers.DTOs;
 
 public class LoginDto
 {
-  [Required]
-  [EmailAddress]
-  public string Email { get; set; } = null!;
+  [Required] [EmailAddress] public string Email { get; set; } = null!;
 
   [Required]
   [DataType(DataType.Password)]
