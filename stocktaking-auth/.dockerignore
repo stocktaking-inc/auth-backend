@@ -1,15 +1,19 @@
-﻿.idea/
+.idea/
+.git/
 
 bin/
 obj/
-Properties/
+docs/
+
+.czrc
+.editorconfig
+.env.example
+
+Dockerfile
+
+.gitattributes
+.gitignore
 
 appsettings.*.json
-!appsettings.Example.json
 
-.git/
-.gitignore
-.gitattributes
-
-stocktaking-auth.sln
-stocktaking-auth.sln.DotSettings.user
+Makefile

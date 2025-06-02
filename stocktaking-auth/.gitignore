@@ -1,5 +1,10 @@
-.idea/
-.vs/
+bin/
+obj/
 
-Backup/
-*.htm
+Properties/
+launchSettings.json
+
+appsettings.json
+appsettings.*.json
+!appsettings.Example.json
+service_api.csproj.user

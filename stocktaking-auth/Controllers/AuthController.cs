@@ -34,104 +34,110 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterDto registerDto)
     {
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
-                .SelectMany(v => v.Errors)
-                .Select(e => e.ErrorMessage)
-                .FirstOrDefault() ?? "Validation error"));
-        }
+      if (!ModelState.IsValid)
+      {
+        return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
+          .SelectMany(v => v.Errors)
+          .Select(e => e.ErrorMessage)
+          .FirstOrDefault() ?? "Validation error"));
+      }
 
-        if (await _context.Profiles.AnyAsync(p => p.Email == registerDto.Email))
-            return BadRequest(ErrorResponseDTO.EmailAlreadyExists());
+      if (await _context.Profiles.AnyAsync(p => p.Email == registerDto.Email))
+        return BadRequest(ErrorResponseDTO.EmailAlreadyExists());
 
-        var profile = new Profile
-        {
-            Name = registerDto.Name,
-            Email = registerDto.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password)
-        };
+      var profile = new Profile
+      {
+        Name = registerDto.Name,
+        Email = registerDto.Email,
+        PasswordHash = BCrypt.Net.BCrypt.HashPassword(registerDto.Password)
+      };
 
-        _context.Profiles.Add(profile);
-        await _context.SaveChangesAsync();
+      _context.Profiles.Add(profile);
+      await _context.SaveChangesAsync();
 
-        var tokens = await GenerateAndSetTokens(profile);
-        return Ok(new { Tokens = tokens });
+      var tokens = await GenerateAndSetTokens(profile);
+      return Ok(new
+      {
+        Tokens = tokens,
+        RedirectUrl = "https://localhost:8443/main"
+      });
     }
 
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginDto loginDto)
     {
-        if (!ModelState.IsValid)
-        {
-            return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
-                .SelectMany(v => v.Errors)
-                .Select(e => e.ErrorMessage)
-                .FirstOrDefault() ?? "Validation error"));
-        }
+      if (!ModelState.IsValid)
+      {
+        return BadRequest(ErrorResponseDTO.ValidationError(ModelState.Values
+          .SelectMany(v => v.Errors)
+          .Select(e => e.ErrorMessage)
+          .FirstOrDefault() ?? "Validation error"));
+      }
 
-        var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == loginDto.Email);
-        if (profile == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, profile.PasswordHash))
-            return Unauthorized(ErrorResponseDTO.InvalidCredentials());
+      var profile = await _context.Profiles.FirstOrDefaultAsync(p => p.Email == loginDto.Email);
+      if (profile == null || !BCrypt.Net.BCrypt.Verify(loginDto.Password, profile.PasswordHash))
+        return Unauthorized(ErrorResponseDTO.InvalidCredentials());
 
-        var tokens = await GenerateAndSetTokens(profile);
-        return Ok(new { Tokens = tokens });
+      var tokens = await GenerateAndSetTokens(profile);
+      return Ok(new
+      {
+        Tokens = tokens,
+        RedirectUrl = "https://localhost:8443/main"
+      });
     }
 
     [HttpPost("refresh")]
     public async Task<IActionResult> Refresh()
     {
-        var accessToken = Request.Cookies["AccessToken"];
-        var refreshToken = Request.Cookies["RefreshToken"];
-
-        if (string.IsNullOrEmpty(accessToken) || string.IsNullOrEmpty(refreshToken))
-            return Unauthorized(ErrorResponseDTO.MissingTokens());
-
-        var principal = GetPrincipalFromExpiredToken(accessToken);
-        if (principal == null)
-            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
-
-        var userId = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-        if (string.IsNullOrEmpty(userId))
-            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
-
-        var db = _redis.GetDatabase();
-        var storedRefreshToken = await db.StringGetAsync($"refresh:{userId}");
-        if (storedRefreshToken != refreshToken)
-            return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
-
-        if (!int.TryParse(userId, out var userIdInt))
-            return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
-
-        var profile = await _context.Profiles.FindAsync(userIdInt);
-        if (profile == null)
-            return Unauthorized(ErrorResponseDTO.UserNotFound());
-
-        var newAccessToken = GenerateAccessToken(profile);
-        var newRefreshToken = GenerateRefreshToken();
-
-        await Task.WhenAll(
-            db.StringSetAsync($"refresh:{profile.Id}", newRefreshToken, TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays)),
-            db.StringSetAsync($"refresh-token-mapping:{newRefreshToken}", profile.Id.ToString(), TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays))
-        );
-
-        Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
+        try
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes)
-        });
+            var refreshToken = Request.Cookies["RefreshToken"];
 
-        Response.Cookies.Append("RefreshToken", newRefreshToken, new CookieOptions
+            if (string.IsNullOrEmpty(refreshToken))
+            {
+                return Unauthorized(ErrorResponseDTO.MissingTokens());
+            }
+
+            var db = _redis.GetDatabase();
+            var userId = await db.StringGetAsync($"refresh-token-mapping:{refreshToken}");
+
+            if (userId.IsNullOrEmpty)
+            {
+                return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
+            }
+
+            if (!int.TryParse(userId, out var userIdInt))
+            {
+                return Unauthorized(ErrorResponseDTO.InvalidRefreshToken());
+            }
+
+            var profile = await _context.Profiles.FindAsync(userIdInt);
+            if (profile == null)
+            {
+                return Unauthorized(ErrorResponseDTO.UserNotFound());
+            }
+
+            var newAccessToken = GenerateAccessToken(profile);
+
+            Response.Cookies.Append("AccessToken", newAccessToken, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Lax,
+                Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+                Path = "/"
+            });
+
+            return Ok(new { RedirectUrl = "https://localhost:8443/main" });
+        }
+        catch (RedisConnectionException ex)
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
-        });
-
-        return Ok(new { AccessToken = newAccessToken, RefreshToken = newRefreshToken });
+            return StatusCode(500, ErrorResponseDTO.InternalServerError("Failed to connect to token store"));
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, ErrorResponseDTO.InternalServerError("An unexpected error occurred"));
+        }
     }
 
     [HttpPost("refresh-access")]
