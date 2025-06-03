@@ -59,7 +59,7 @@ public class AuthController : ControllerBase
       return Ok(new
       {
         Tokens = tokens,
-        RedirectUrl = "https://localhost:8443/main"
+        RedirectUrl = "https://localhost:8443/dashboard"
       });
     }
 
@@ -82,7 +82,7 @@ public class AuthController : ControllerBase
       return Ok(new
       {
         Tokens = tokens,
-        RedirectUrl = "https://localhost:8443/main"
+        RedirectUrl = "https://localhost:8443/dashboard"
       });
     }
 
@@ -128,7 +128,7 @@ public class AuthController : ControllerBase
                 Path = "/"
             });
 
-            return Ok(new { RedirectUrl = "https://localhost:8443/main" });
+            return Ok(new { RedirectUrl = "https://localhost:8443/dashboard" });
         }
         catch (RedisConnectionException ex)
         {
@@ -222,36 +222,101 @@ public class AuthController : ControllerBase
         }
     }
 
-    private async Task<object> GenerateAndSetTokens(Profile profile)
+    [HttpGet("me")]
+    public async Task<IActionResult> GetMyProfile()
     {
-        var accessToken = GenerateAccessToken(profile);
-        var refreshToken = GenerateRefreshToken();
-
-        var db = _redis.GetDatabase();
-        await Task.WhenAll(
-            db.StringSetAsync($"refresh:{profile.Id}", refreshToken, TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays)),
-            db.StringSetAsync($"refresh-token-mapping:{refreshToken}", profile.Id.ToString(), TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays))
-        );
-
-        Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
+        try
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
-            Path = "/"
-        });
+            var accessToken = Request.Cookies["AccessToken"];
+            if (string.IsNullOrEmpty(accessToken))
+            {
+                return Unauthorized(ErrorResponseDTO.MissingTokens());
+            }
 
-        Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var validationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidateAudience = true,
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                ValidIssuer = _jwtSettings.Issuer,
+                ValidAudience = _jwtSettings.Audience,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.Key))
+            };
+
+            ClaimsPrincipal principal;
+            try
+            {
+                principal = tokenHandler.ValidateToken(accessToken, validationParameters, out _);
+            }
+            catch
+            {
+                return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
+            }
+
+            var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier);
+            if (userIdClaim == null || !int.TryParse(userIdClaim.Value, out var userId))
+            {
+                return Unauthorized(ErrorResponseDTO.InvalidAccessToken());
+            }
+
+            var profile = await _context.Profiles
+                .Where(p => p.Id == userId)
+                .Select(p => new
+                {
+                    p.Name,
+                    p.Email,
+                    p.Phone,
+                    p.Company,
+                    p.Position,
+                    p.Description
+                })
+                .FirstOrDefaultAsync();
+
+            if (profile == null)
+            {
+                return NotFound(ErrorResponseDTO.UserNotFound());
+            }
+
+            return Ok(profile);
+        }
+        catch (Exception ex)
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Lax,
-            Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
-        });
-
-        return new { AccessToken = accessToken, RefreshToken = refreshToken };
+            return StatusCode(500, ErrorResponseDTO.InternalServerError("An unexpected error occurred"));
+        }
     }
+
+    private async Task<object> GenerateAndSetTokens(Profile profile)
+  {
+    var accessToken = GenerateAccessToken(profile);
+    var refreshToken = GenerateRefreshToken();
+
+    var db = _redis.GetDatabase();
+    await Task.WhenAll(
+        db.StringSetAsync($"refresh:{profile.Id}", refreshToken, TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays)),
+        db.StringSetAsync($"refresh-token-mapping:{refreshToken}", profile.Id.ToString(), TimeSpan.FromDays(_jwtSettings.RefreshTokenExpirationDays))
+    );
+
+    Response.Cookies.Append("AccessToken", accessToken, new CookieOptions
+    {
+      HttpOnly = true,
+      Secure = true,
+      SameSite = SameSiteMode.Lax,
+      Expires = DateTime.UtcNow.AddMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+      Path = "/"
+    });
+
+    Response.Cookies.Append("RefreshToken", refreshToken, new CookieOptions
+    {
+      HttpOnly = true,
+      Secure = true,
+      SameSite = SameSiteMode.Lax,
+      Expires = DateTime.UtcNow.AddDays(_jwtSettings.RefreshTokenExpirationDays)
+    });
+
+    return new { AccessToken = accessToken, RefreshToken = refreshToken };
+  }
 
     private string GenerateAccessToken(Profile profile)
     {
