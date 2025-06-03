@@ -8,7 +8,6 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Validate and get configurations early
 var jwtSettings = builder.Configuration.GetSection(JwtSettings.SectionName).Get<JwtSettings>();
 if (jwtSettings == null || string.IsNullOrEmpty(jwtSettings.Key))
 {
@@ -29,18 +28,14 @@ if (string.IsNullOrEmpty(dbConnectionString))
 
 builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection(JwtSettings.SectionName));
 
-// Add services
 builder.Services.AddControllers();
 
-// EF Core with PostgreSQL
 builder.Services.AddDbContext<AuthDbContext>(options =>
     options.UseNpgsql(dbConnectionString));
 
-// Redis
 builder.Services.AddSingleton<IConnectionMultiplexer>(
     ConnectionMultiplexer.Connect(redisConnectionString));
 
-// JWT (using validated settings)
 builder.Services.AddSingleton(jwtSettings);
 builder.Services.AddAuthentication(options =>
 {
@@ -61,7 +56,6 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// CORS (unchanged)
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAuthAndMainApp", builder =>
@@ -70,7 +64,7 @@ builder.Services.AddCors(options =>
             .WithOrigins(
                 "http://localhost:5173",  // react
                 "http://localhost:3000",  // next
-                "https://localhost:8443", //nginx
+                "https://localhost:8443", // nginx
                 "http://localhost:3001"   // next test
             )
             .AllowAnyMethod()
